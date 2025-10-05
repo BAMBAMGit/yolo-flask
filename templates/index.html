@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>YOLOv8 Card Detection (Phone Camera)</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #111; color: #fff;
+           display:flex; flex-direction:column; align-items:center; justify-content:flex-start; height:100vh; margin:0; padding:10px; }
+    canvas { max-width: 90vw; border-radius: 6px; margin: 10px 0; touch-action: manipulation; position:relative; }
+    h1 { margin-bottom:5px; font-weight:600; text-align:center; }
+    h2 { margin-top:0; font-weight:400; font-size:16px; color:#ccc; text-align:center; margin-bottom:10px; }
+    video { display:none; }
+  </style>
+</head>
+<body>
+  <h1>YOLOv8 Card Detection (Phone Camera)</h1>
+  <h2>Harnessing the power of AI to read your mind!</h2>
+
+  <video id="inputVideo" autoplay playsinline width="640"></video>
+  <canvas id="outputCanvas" width="640" height="480"></canvas>
+
+  <script>
+    const video = document.getElementById('inputVideo');
+    const canvas = document.getElementById('outputCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const rankGrid = [
+      ['A','2','3','4'],
+      ['5','6','7','8'],
+      ['9','10','J','Q']
+    ];
+
+    let selectedRank = null;
+    let selectedSuit = null;
+    let targetCard = null;
+
+    // Access camera
+    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      .then(stream => video.srcObject = stream)
+      .catch(err => console.error("Error accessing camera:", err));
+
+    // Flash effect
+    function flashTap(x, y) {
+      ctx.fillStyle = "rgba(255,255,0,0.2)";
+      ctx.beginPath();
+      ctx.arc(x, y, 30, 0, 2*Math.PI);
+      ctx.fill();
+    }
+
+    // Tap logic for page-wide click
+    document.addEventListener('click', function(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Tap above the canvas to reset
+      if (e.clientY < rect.top) {
+        selectedRank = null;
+        selectedSuit = null;
+        targetCard = null;
+        console.log("Selection reset.");
+        return;
+      }
+
+      // Tap below the canvas to select King
+      if (e.clientY > rect.bottom && !selectedRank) {
+        selectedRank = 'K';
+        console.log("Selected rank: K");
+        return;
+      }
+
+      // Only consider taps inside the canvas for rank/suit selection
+      if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
+
+      // Flash effect
+      flashTap(x, y);
+
+      // First tap: rank
+      if (!selectedRank) {
+        const rowHeight = rect.height / 3;
+        const colWidth = rect.width / 4;
+        const row = Math.floor(y / rowHeight);
+        const col = Math.floor(x / colWidth);
+        selectedRank = rankGrid[Math.min(row,2)][Math.min(col,3)];
+        console.log("Selected rank:", selectedRank);
+      } 
+      // Second tap: suit
+      else if (!selectedSuit) {
+        const halfWidth = rect.width / 2;
+        const halfHeight = rect.height / 2;
+        if (x < halfWidth && y < halfHeight) selectedSuit = 'd'; // upper-left = Diamond
+        else if (x >= halfWidth && y < halfHeight) selectedSuit = 'c'; // upper-right = Clubs
+        else if (x < halfWidth && y >= halfHeight) selectedSuit = 'h'; // bottom-left = Heart
+        else selectedSuit = 's'; // bottom-right = Spade
+
+        targetCard = selectedRank + selectedSuit;
+        console.log("Selected suit:", selectedSuit, "Target card:", targetCard);
+      }
+    });
+
+    // Send frame to server
+    async function sendFrame() {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+      const form = new FormData();
+      form.append('frame', blob);
+      form.append('target_card', targetCard || ''); // send empty if not chosen
+
+      fetch('/process_frame', { method: 'POST', body: form })
+        .then(resp => resp.blob())
+        .then(processedBlob => {
+          const img = new Image();
+          img.src = URL.createObjectURL(processedBlob);
+          img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        })
+        .catch(err => console.error(err));
+
+      setTimeout(sendFrame, 50); // ~20 FPS
+    }
+
+    sendFrame();
+  </script>
+</body>
+</html>
